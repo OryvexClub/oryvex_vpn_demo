@@ -135,6 +135,24 @@ class VPNService extends ChangeNotifier {
   /// True when OryvexVPN's own tunnel is genuinely up.
   bool get isGenuinelyConnected => _snapshot.isGenuinelyConnected;
 
+  /// Recent connecting-stage messages (e.g. "Finding fastest server...") so
+  /// the UI can show a live step strip while connecting. Most recent last.
+  final List<String> _stageHistory = [];
+  List<String> get stageHistory => List.unmodifiable(_stageHistory);
+
+  /// Representative 0..1 progress for the connecting ring animation.
+  /// Maps the coarse connection stages to a meaningful sweep.
+  double get connectProgress {
+    switch (_stage) {
+      case VpnStage.fetchingConfig:
+        return 0.38;
+      case VpnStage.installingTunnel:
+        return 0.72;
+      default:
+        return 0.0;
+    }
+  }
+
   /// Human-readable connection duration, or '—' when not connected.
   String get connectedDuration {
     final at = _connectedAt;
@@ -167,6 +185,14 @@ class VPNService extends ChangeNotifier {
 
   void _updateStatus(String msg) {
     _statusMessage = msg;
+    // While connecting, keep a rolling trail of the stage messages so the UI
+    // can show a live "step strip" (most recent last).
+    if (_stage == VpnStage.fetchingConfig || _stage == VpnStage.installingTunnel) {
+      if (_stageHistory.isEmpty || _stageHistory.last != msg) {
+        _stageHistory.add(msg);
+        if (_stageHistory.length > 6) _stageHistory.removeAt(0);
+      }
+    }
     VpnLogger.info(_tag, 'Status: $msg');
     notifyListeners();
   }
@@ -594,6 +620,7 @@ class VPNService extends ChangeNotifier {
     if (connected) {
       _stage = VpnStage.connected;
       _connectedAt = DateTime.now();
+      _stageHistory.clear();
       _updateStatus('Connected');
       AppLogger.connectionState('Connected');
       _startStatsMonitoring();
@@ -632,6 +659,7 @@ class VPNService extends ChangeNotifier {
 
       _stage = VpnStage.idle;
       _connectedAt = null;
+      _stageHistory.clear();
       _totalDownload = 0;
       _totalUpload = 0;
       _previousRxBytes = 0;

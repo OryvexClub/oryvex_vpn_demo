@@ -22,6 +22,9 @@ class _HomeScreenState extends State<HomeScreen>
   late final AnimationController _brandShimmerController;
   late final AnimationController _auroraController;
 
+  /// Drives the rotating comet sweep while connecting.
+  late final AnimationController _connectProgController;
+
   @override
   void initState() {
     super.initState();
@@ -58,6 +61,12 @@ class _HomeScreenState extends State<HomeScreen>
       vsync: this,
       duration: const Duration(seconds: 12),
     )..repeat();
+
+    // Connecting sweep (loops only while connecting)
+    _connectProgController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
   }
 
   @override
@@ -67,6 +76,7 @@ class _HomeScreenState extends State<HomeScreen>
     _entryController.dispose();
     _brandShimmerController.dispose();
     _auroraController.dispose();
+    _connectProgController.dispose();
     super.dispose();
   }
 
@@ -99,32 +109,45 @@ class _HomeScreenState extends State<HomeScreen>
               children: [
                 _buildTitleBar(vpn, color),
                 Expanded(
-                  child: SingleChildScrollView(
-                    physics: const BouncingScrollPhysics(),
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Column(
-                      children: [
-                        const SizedBox(height: 20),
-                        _buildHeader(),
-                        const SizedBox(height: 30),
-                        _buildPowerButton(vpn, color, active),
-                        const SizedBox(height: 30),
-                        _buildStatusText(vpn, color),
-                        if (vpn.externalVpnActive) ...[
-                          const SizedBox(height: 12),
-                          _buildExternalVpnBanner(),
-                        ],
-                        if (vpn.lastError != null) ...[
-                          const SizedBox(height: 16),
-                          _buildErrorBox(vpn),
-                        ],
-                        const SizedBox(height: 24),
-                        _buildModeSelector(vpn, active),
-                        const SizedBox(height: 24),
-                        _buildStatsGrid(vpn),
-                        const SizedBox(height: 30),
-                      ],
-                    ),
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      final compact = constraints.maxWidth < 360;
+                      final hPad = compact ? 18.0 : 24.0;
+                      final gap = compact ? 22.0 : 30.0;
+                      final cardGap = compact ? 12.0 : 16.0;
+                      return SingleChildScrollView(
+                        physics: const BouncingScrollPhysics(),
+                        padding: EdgeInsets.symmetric(horizontal: hPad),
+                        child: Column(
+                          children: [
+                            SizedBox(height: compact ? 14 : 20),
+                            _buildHeader(),
+                            SizedBox(height: gap),
+                            _buildPowerButton(vpn, color, active, compact),
+                            SizedBox(height: gap),
+                            _buildStatusText(vpn, color, compact),
+                            if (vpn.isConnecting &&
+                                vpn.stageHistory.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              _buildStageStrip(vpn),
+                            ],
+                            if (vpn.externalVpnActive) ...[
+                              const SizedBox(height: 12),
+                              _buildExternalVpnBanner(),
+                            ],
+                            if (vpn.lastError != null) ...[
+                              SizedBox(height: compact ? 12 : 16),
+                              _buildErrorBox(vpn),
+                            ],
+                            SizedBox(height: cardGap + 8),
+                            _buildModeSelector(vpn, active),
+                            SizedBox(height: cardGap + 8),
+                            _buildStatsGrid(vpn, compact: compact, cardGap: cardGap),
+                            const SizedBox(height: 30),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
               ],
@@ -223,7 +246,7 @@ class _HomeScreenState extends State<HomeScreen>
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.info_outline_rounded, color: AppTheme.textMuted, size: 16),
+            icon: const Icon(Icons.help_outline_rounded, color: AppTheme.textMuted, size: 16),
             onPressed: () => _showAiCompatibilityDialog(context),
             splashRadius: 18,
             padding: EdgeInsets.zero,
@@ -231,7 +254,7 @@ class _HomeScreenState extends State<HomeScreen>
             tooltip: 'AI Service Compatibility',
           ),
           IconButton(
-            icon: const Icon(Icons.terminal, color: AppTheme.textMuted, size: 16),
+            icon: const Icon(Icons.terminal_rounded, color: AppTheme.textMuted, size: 16),
             onPressed: () {
               AppTheme.showAnimatedDialog(
                 context: context,
@@ -263,7 +286,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── Status text pill ──────────────────────────────────────────────
-  Widget _buildStatusText(VPNService vpn, Color color) {
+  Widget _buildStatusText(VPNService vpn, Color color, [bool compact = false]) {
     return AnimatedBuilder(
       animation: _pulseController,
       builder: (context, child) {
@@ -298,6 +321,74 @@ class _HomeScreenState extends State<HomeScreen>
           ),
         );
       },
+    );
+  }
+
+  // ── Live stage strip (shown while connecting) ─────────────────────
+  Widget _buildStageStrip(VPNService vpn) {
+    final history = vpn.stageHistory;
+    final current = history.isNotEmpty ? history.last : vpn.statusMessage;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: AppTheme.glassDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.6,
+                  valueColor: AlwaysStoppedAnimation(AppTheme.warning),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  current,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (history.length > 1) ...[
+            const SizedBox(height: 8),
+            for (final step in history.take(history.length - 1).toList().reversed)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Row(
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 5),
+                      child: Icon(Icons.check, color: AppTheme.textTertiary, size: 10),
+                    ),
+                    Expanded(
+                      child: Text(
+                        step,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppTheme.textTertiary,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -357,25 +448,39 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── Power button with glow ring ───────────────────────────────────
-  Widget _buildPowerButton(VPNService vpn, Color color, bool active) {
+  Widget _buildPowerButton(VPNService vpn, Color color, bool active,
+      [bool compact = false]) {
+    final outer = compact ? 150.0 : 180.0;
+    final inner = compact ? 118.0 : 140.0;
     return GestureDetector(
       onTap: vpn.isConnecting
           ? null
           : () => vpn.isConnected ? vpn.disconnect() : vpn.connect(),
       child: AnimatedBuilder(
-        animation: Listenable.merge([_pulseController, _glowController]),
+        animation: Listenable.merge(
+            [_pulseController, _glowController, _connectProgController]),
         builder: (context, child) {
           final t = _pulseController.value;
           final glowT = _glowController.value;
+          // Start / stop the connecting sweep based on stage.
+          if (vpn.isConnecting && !_connectProgController.isAnimating) {
+            _connectProgController.repeat();
+          } else if (!vpn.isConnecting && _connectProgController.isAnimating) {
+            _connectProgController.stop();
+            _connectProgController.value = 0;
+          }
+
           return SizedBox(
-            width: 180,
-            height: 180,
+            width: outer,
+            height: outer,
             child: CustomPaint(
               painter: _RingPainter(
                 color: color,
                 active: active,
-                progress: vpn.isConnected ? 1.0 : t,
+                progress: vpn.isConnected ? 1.0 : (vpn.isConnecting ? vpn.connectProgress : t),
                 glowIntensity: active ? 0.15 + 0.1 * glowT : 0.0,
+                sweepTick: _connectProgController.value,
+                sweepActive: vpn.isConnecting,
               ),
               child: Center(child: child),
             ),
@@ -384,8 +489,8 @@ class _HomeScreenState extends State<HomeScreen>
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 400),
           curve: Curves.easeOutCubic,
-          width: 140,
-          height: 140,
+          width: inner,
+          height: inner,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             color: AppTheme.surfaceElevated,
@@ -403,30 +508,27 @@ class _HomeScreenState extends State<HomeScreen>
             ],
           ),
           child: AnimatedSwitcher(
-            duration: const Duration(milliseconds: 400),
-            switchInCurve: Curves.easeOutBack,
-            switchOutCurve: Curves.easeIn,
-            transitionBuilder: (child, anim) => ScaleTransition(
-              scale: anim,
-              child: FadeTransition(opacity: anim, child: child),
-            ),
-            child: vpn.isConnecting
-                ? const SizedBox(
-                    key: ValueKey('connecting'),
-                    width: 34,
-                    height: 34,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(AppTheme.warning),
+              duration: const Duration(milliseconds: 400),
+              switchInCurve: Curves.easeOutBack,
+              switchOutCurve: Curves.easeIn,
+              transitionBuilder: (child, anim) => ScaleTransition(
+                scale: anim,
+                child: FadeTransition(opacity: anim, child: child),
+              ),
+              child: vpn.isConnecting
+                  ? Icon(
+                      Icons.power_settings_new_rounded,
+                      key: const ValueKey('connecting'),
+                      size: 56,
+                      color: AppTheme.warning,
+                    )
+                  : Icon(
+                      vpn.isConnected ? Icons.bolt : Icons.power_settings_new_rounded,
+                      key: ValueKey(vpn.isConnected ? 'connected' : 'idle'),
+                      size: vpn.isConnected ? 52 : 56,
+                      color: active ? color : Colors.white24,
                     ),
-                  )
-                : Icon(
-                    vpn.isConnected ? Icons.bolt : Icons.power_settings_new_rounded,
-                    key: ValueKey(vpn.isConnected ? 'connected' : 'idle'),
-                    size: vpn.isConnected ? 52 : 56,
-                    color: active ? color : Colors.white24,
-                  ),
-          ),
+            ),
         ),
       ),
     );
@@ -739,54 +841,57 @@ class _HomeScreenState extends State<HomeScreen>
     final iconColor = isSelected ? Colors.black : AppTheme.textSecondary;
 
     return Expanded(
-      child: GestureDetector(
-        onTap: active ? null : onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 250),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(6),
-            border: Border.all(
-              color: isSelected ? AppTheme.accent : AppTheme.border,
-              width: isSelected ? 1.5 : 1,
-            ),
-            boxShadow: isSelected
-                ? AppTheme.glowShadow(AppTheme.accent, blurRadius: 8, opacity: 0.2)
-                : null,
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 14, color: active && !isSelected ? Colors.white24 : iconColor),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: AppTheme.buttonLabelStyle.copyWith(
-                  color: active && !isSelected ? Colors.white24 : textColor,
-                ),
+      child: MouseRegion(
+        cursor: active ? SystemMouseCursors.basic : SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: active ? null : onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOutCubic,
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: isSelected ? AppTheme.accent : AppTheme.border,
+                width: isSelected ? 1.5 : 1,
               ),
-              if (recommended && !isSelected) ...[
-                const SizedBox(width: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: AppTheme.warning.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(3),
+              boxShadow: isSelected
+                  ? AppTheme.glowShadow(AppTheme.accent, blurRadius: 8, opacity: 0.2)
+                  : null,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 14, color: active && !isSelected ? Colors.white24 : iconColor),
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: AppTheme.buttonLabelStyle.copyWith(
+                    color: active && !isSelected ? Colors.white24 : textColor,
                   ),
-                  child: const Text(
-                    'REC',
-                    style: TextStyle(
-                      fontSize: 7,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.warning,
-                      letterSpacing: 0.5,
+                ),
+                if (recommended && !isSelected) ...[
+                  const SizedBox(width: 4),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      color: AppTheme.warning.withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: const Text(
+                      'REC',
+                      style: TextStyle(
+                        fontSize: 7,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.warning,
+                        letterSpacing: 0.5,
+                      ),
                     ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
@@ -794,7 +899,7 @@ class _HomeScreenState extends State<HomeScreen>
   }
 
   // ── Stats grid ────────────────────────────────────────────────────
-  Widget _buildStatsGrid(VPNService vpn) {
+  Widget _buildStatsGrid(VPNService vpn, {bool compact = false, double cardGap = 16}) {
     final s = vpn.stats;
     return AnimatedBuilder(
       animation: _entryController,
@@ -826,20 +931,22 @@ class _HomeScreenState extends State<HomeScreen>
                   title: 'DURATION',
                   value: vpn.connectedDuration,
                   color: AppTheme.purple,
+                  compact: compact,
                 ),
               ),
-              const SizedBox(width: 16),
+              SizedBox(width: cardGap),
               Expanded(
                 child: _buildBentoCard(
                   icon: Icons.speed_rounded,
                   title: 'LATENCY',
                   value: s.ping > 0 ? '${s.ping} ms' : '—',
                   color: AppTheme.warning,
+                  compact: compact,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: cardGap),
           Row(
             children: [
               Expanded(
@@ -848,26 +955,29 @@ class _HomeScreenState extends State<HomeScreen>
                   title: 'DOWNLOAD',
                   value: _formatSpeed(s.downloadSpeed),
                   color: AppTheme.primary,
+                  compact: compact,
                 ),
               ),
-              const SizedBox(width: 16),
+              SizedBox(width: cardGap),
               Expanded(
                 child: _buildBentoCard(
                   icon: Icons.arrow_upward,
                   title: 'UPLOAD',
                   value: _formatSpeed(s.uploadSpeed),
                   color: AppTheme.accent,
+                  compact: compact,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: cardGap),
           _buildBentoCard(
             icon: Icons.public,
             title: 'IP ADDRESS',
             value: s.ipInfo.ip,
             color: AppTheme.purple,
             fullWidth: true,
+            compact: compact,
           ),
         ],
       ),
@@ -888,54 +998,73 @@ class _HomeScreenState extends State<HomeScreen>
     required String value,
     required Color color,
     bool fullWidth = false,
+    bool compact = false,
   }) {
-    return Container(
-      width: fullWidth ? double.infinity : null,
-      padding: const EdgeInsets.all(20),
-      decoration: AppTheme.glassDecoration(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(6),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+        width: fullWidth ? double.infinity : null,
+        padding: EdgeInsets.all(compact ? 14 : 20),
+        decoration: fullWidth
+            ? BoxDecoration(
+                color: color.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: color.withOpacity(0.2)),
+                boxShadow: AppTheme.glowShadow(color, blurRadius: 12, opacity: 0.1),
+              )
+            : AppTheme.glassDecoration(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: color.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Icon(icon, size: 16, color: color),
                 ),
-                child: Icon(icon, size: 16, color: color),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                title,
-                style: AppTheme.labelStyle,
-              ),
-            ],
-          ),
-          const SizedBox(height: 14),
-          Text(
-            value,
-            style: AppTheme.valueStyle,
-          ),
-        ],
+                const SizedBox(width: 10),
+                Text(
+                  title,
+                  style: AppTheme.labelStyle,
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Text(
+              value,
+              style: AppTheme.valueStyle,
+            ),
+          ],
+        ),
       ),
     );
   }
 }
 
-// ── Custom ring painter with glow ───────────────────────────────────
+// ── Custom ring painter with glow & connecting sweep ───────────────
 class _RingPainter extends CustomPainter {
   final Color color;
   final bool active;
   final double progress;
   final double glowIntensity;
 
+  /// 0..1 current sweep tick of a rotating highlight while connecting.
+  final double sweepTick;
+  final bool sweepActive;
+
   _RingPainter({
     required this.color,
     required this.active,
     required this.progress,
     this.glowIntensity = 0.0,
+    this.sweepTick = 0.0,
+    this.sweepActive = false,
   });
 
   @override
@@ -950,6 +1079,42 @@ class _RingPainter extends CustomPainter {
       ..strokeWidth = strokeWidth
       ..color = AppTheme.border;
     canvas.drawCircle(center, radius, trackPaint);
+
+    // Connecting: draw a rotating highlight sweep (a bright arc that
+    // "comets" around the track) plus the progress arc.
+    if (sweepActive) {
+      // Progress arc — grows toward the stage progress.
+      final sweepAngle = 2 * math.pi * progress.clamp(0.0, 1.0);
+      final arcPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth * 1.5
+        ..strokeCap = StrokeCap.round
+        ..color = color.withOpacity(0.9);
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        -math.pi / 2,
+        sweepAngle,
+        false,
+        arcPaint,
+      );
+
+      // Rotating comet highlight.
+      final cometPaint = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth * 3
+        ..strokeCap = StrokeCap.round
+        ..color = color.withOpacity(0.55)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+      final cometStart = -math.pi / 2 + 2 * math.pi * sweepTick - 1.2;
+      canvas.drawArc(
+        Rect.fromCircle(center: center, radius: radius),
+        cometStart,
+        0.8,
+        false,
+        cometPaint,
+      );
+      return;
+    }
 
     if (!active && progress == 0) return;
 
@@ -996,7 +1161,9 @@ class _RingPainter extends CustomPainter {
       oldDelegate.color != color ||
       oldDelegate.active != active ||
       oldDelegate.progress != progress ||
-      oldDelegate.glowIntensity != glowIntensity;
+      oldDelegate.glowIntensity != glowIntensity ||
+      oldDelegate.sweepTick != sweepTick ||
+      oldDelegate.sweepActive != sweepActive;
 }
 
 // ── Drifting aurora glow background ────────────────────────────────
